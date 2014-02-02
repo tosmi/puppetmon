@@ -1,0 +1,33 @@
+#!/bin/env ruby
+
+# maximum age of the agent lock file in seconds
+$MAX_AGE = 43200
+
+class MonitorBaseConfig
+  attr_reader :restart_command
+
+  @restart_command = 'service puppet restart'
+  @state_dir           = '/var/lib/puppet/state'
+  @state_dir           = ENV['PUPPETAGENT_STATE_DIR'] if ENV['PUPPETAGENT_STATE_DIR']
+  @agent_lock_filename = 'agent_catalog_run.lock'
+end
+
+class SolarisConfig < MonitorBaseConfig
+  @restart_command = 'svc restart puppet'
+end
+
+class AIXConfig < MonitorBaseConfig
+  @restart_command = '/etc/rc.d/init.d/puppet restart'
+end
+
+
+
+agent_lock = File.join(state_dir, agent_lock_filename)
+p agent_lock
+
+if File.exists?(agent_lock)
+  lastmodified = File.stat(agent_lock).mtime
+  if Time.now - lastmodified > $MAX_AGE
+    puts 'here'
+  end
+end
