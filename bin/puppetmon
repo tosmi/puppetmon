@@ -8,92 +8,89 @@ $logger.level = Logger::DEBUG
 # maximum age of the agent lock file in seconds
 $MAX_AGE = 43200
 
-class PuppetMonitor
-  attr_reader :state_dir, :agent_lock
+module PuppetMonitor
 
-  def initialize()
-    @state_dir  = '/var/lib/puppet/state'
-    @state_dir  = ENV['PUPPETAGENT_STATE_DIR'] if ENV['PUPPETAGENT_STATE_DIR']
-    @agent_lock = File.join(@state_dir, 'agent_catalog_run.lock')
-  end
+  class BasePuppetMonitor
+    attr_reader :state_dir, :agent_lock
 
-  def restart
-    raise NotImplementedError
-  end
+    def initialize()
+      @state_dir  = '/var/lib/puppet/state'
+      @state_dir  = ENV['PUPPETAGENT_STATE_DIR'] if ENV['PUPPETAGENT_STATE_DIR']
+      @agent_lock = File.join(@state_dir, 'agent_catalog_run.lock')
+    end
 
-  def lock_older_than?(age)
-    $logger.debug("check if #{@agent_lock} is older than #{age}")
-    if File.exists?(@agent_lock)
-      lastmodified = File.stat(@agent_lock).mtime
-      if Time.now - lastmodified > age
-        $logger.debug("#{@agent_lock} is older than #{age}")
-        return true
+    def restart
+      raise NotImplementedError
+    end
+
+    def lock_older_than?(age)
+      $logger.debug("check if #{@agent_lock} is older than #{age}")
+      if File.exists?(@agent_lock)
+        lastmodified = File.stat(@agent_lock).mtime
+        if Time.now - lastmodified > age
+          $logger.debug("#{@agent_lock} is older than #{age}")
+          return true
+        end
+      end
+
+      return false
+    end
+
+    def kill_stale_agent
+      pid = get_agent_pid
+      $logger.debug("killing stale agent with pid #{pid}")
+      Process.kill('TERM', pid)
+    end
+
+    def get_agent_pid
+      if File.exists?(@agent_lock)
+        pid = File.open(@agent_lock).read
+        pid.chomp.to_i
       end
     end
 
-    return false
   end
 
-  def kill_stale_agent
-    pid = get_agent_pid
-    $logger.debug("killing stale agent with pid #{pid}")
-    Process.kill('KILL', pid)
-  end
-
-  def get_agent_pid
-    if File.exists?(@agent_lock)
-      pid = File.open(@agent_lock).read
-      pid.chomp.to_i
+  class SunOS < BasePuppetMonitor
+    def restart
+      `/usr/sbin/svcadm restart puppet`
     end
   end
 
-end
+  class AIX < BasePuppetMonitor
+    def restart
+      `/etc/rc.d/init.d/puppet restart`
+    end
+  end
 
-class SolarisPuppetMonitor < PuppetMonitor
-  def restart
-    `/usr/sbin/svcadm restart puppet`
+  class Linux < BasePuppetMonitor
+    def restart
+      `/sbin/service puppet restart`
+    end
   end
 end
 
-class AIXPuppetMonitor < PuppetMonitor
-  def restart
-    `/etc/rc.d/init.d/puppet restart`
-  end
-end
+class GetAMonitor
+  def initialize()
+    case `uname -s`.chomp()
+    when 'Linux'
+      @monimp = PuppetMonitor::Linux.new
 
-class LinuxPuppetMonitor < PuppetMonitor
-  def restart
-    `/sbin/service puppet restart`
-  end
-end
+    when 'SunOS'
+      @monimp = PuppetMonitor::SunOS.new
 
-class Context
-  def initialize(puppetmonitor)
-    @puppetmonitor = puppetmonitor.new
+    when 'AIX'
+      @monimp = PuppetMonitor::AIX.new
+    end
   end
 
-  def restart
-    @puppetmonitor.restart
+  def method_missing(meth, *args, &block)
+    @monimp.send(meth.to_sym, *args, &block)
   end
-end
+edn
 
-def get_monitor
-  os = `uname -s`.chomp()
 
-  case os
-  when 'Linux'
-    return LinuxPuppetMonitor.new
-
-  when 'SunOS'
-    return SolarisPuppetMonitor.new
-
-  when 'AIX'
-    return AIXPuppetMonitor.new
-  end
-end
-
-mon = get_monitor()
-
+mon = GetAMonitor.new
 if mon.lock_older_than?($MAX_AGE)
   $logger.debug("going restart the puppet agent")
   mon.kill_stale_agent
