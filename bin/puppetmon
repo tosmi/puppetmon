@@ -1,18 +1,52 @@
 #!/bin/env ruby
 
+require 'logger'
+
+$logger       = Logger.new(STDOUT)
+$logger.level = Logger::DEBUG
+
 # maximum age of the agent lock file in seconds
 $MAX_AGE = 43200
 
 class PuppetMonitor
-  attr_reader :state_dir
+  attr_reader :state_dir, :agent_lock
+
+  def initialize()
+    @state_dir  = '/var/lib/puppet/state'
+    @state_dir  = ENV['PUPPETAGENT_STATE_DIR'] if ENV['PUPPETAGENT_STATE_DIR']
+    @agent_lock = File.join(@state_dir, 'agent_catalog_run.lock')
+  end
 
   def restart
     raise NotImplementedError
   end
 
-  @state_dir           = '/var/lib/puppet/state'
-  @state_dir           = ENV['PUPPETAGENT_STATE_DIR'] if ENV['PUPPETAGENT_STATE_DIR']
-  @agent_lock_filename = File.join(@state_dir, 'agent_catalog_run.lock')
+  def lock_older_than?(age)
+    $logger.debug("check if #{@agent_lock} is older than #{age}")
+    if File.exists?(@agent_lock)
+      lastmodified = File.stat(@agent_lock).mtime
+      if Time.now - lastmodified > age
+        $logger.debug("#{@agent_lock} is older than #{age}")
+        return true
+      end
+    end
+
+    return false
+  end
+
+  def kill_stale_agent
+    pid = get_agent_pid
+    $logger.debug("killing stale agent with pid #{pid}")
+    Process.kill('KILL', pid)
+  end
+
+  def get_agent_pid
+    if File.exists?(@agent_lock)
+      pid = File.open(@agent_lock).read
+      pid.chomp.to_i
+    end
+  end
+
 end
 
 class SolarisPuppetMonitor < PuppetMonitor
@@ -27,14 +61,13 @@ class AIXPuppetMonitor < PuppetMonitor
   end
 end
 
-class LinuxPuppetMonitor < Puppetmonitor
+class LinuxPuppetMonitor < PuppetMonitor
   def restart
     `/sbin/service puppet restart`
   end
 end
 
 class Context
-
   def initialize(puppetmonitor)
     @puppetmonitor = puppetmonitor.new
   end
@@ -44,9 +77,25 @@ class Context
   end
 end
 
-if File.exists?(agent_lock)
-  lastmodified = File.stat(agent_lock).mtime
-  if Time.now - lastmodified > $MAX_AGE
-    puts 'here'
+def get_monitor
+  os = `uname -s`.chomp()
+
+  case os
+  when 'Linux'
+    return LinuxPuppetMonitor.new
+
+  when 'SunOS'
+    return SolarisPuppetMonitor.new
+
+  when 'AIX'
+    return AIXPuppetMonitor.new
   end
+end
+
+mon = get_monitor()
+
+if mon.lock_older_than?($MAX_AGE)
+  $logger.debug("going restart the puppet agent")
+  mon.kill_stale_agent
+  mon.restart
 end
