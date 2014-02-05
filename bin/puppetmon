@@ -18,6 +18,7 @@ module PuppetMonitor
     attr_reader :state_dir, :agent_lock, :hostname
 
     def initialize()
+      @agent_pid_file = '/var/run/puppet/agent.pid'
       @state_dir  = '/var/lib/puppet/state'
       @state_dir  = ENV['PUPPETAGENT_STATE_DIR'] if ENV['PUPPETAGENT_STATE_DIR']
       @agent_lock = File.join(@state_dir, 'agent_catalog_run.lock')
@@ -29,11 +30,17 @@ module PuppetMonitor
     end
 
     def status_ok?
-      raise NotImplementedError
+      pid = get_agent_pid @agent_pid_file
+      $logger.debug("checking if agent with a pid #{pid} exists")
+      Process.kill(0, pid)
+      rescue => e
+        $logger.error("checking the agent pid failed with #{e.message}")
+      else
+        true
     end
 
     def lock_older_than?(age)
-      $logger.debug("check if #{@agent_lock} is older than #{age}")
+      $logger.debug("checking if #{@agent_lock} is older than #{age}")
       if File.exists?(@agent_lock)
         lastmodified = File.stat(@agent_lock).mtime
         if Time.now - lastmodified > age
@@ -46,14 +53,19 @@ module PuppetMonitor
     end
 
     def kill_stale_agent
-      pid = get_agent_pid
+      pid = get_agent_pid @agent_lock
       $logger.debug("killing stale agent with pid #{pid}")
       Process.kill('TERM', pid)
+      rescue Errno::ESRCH => e
+        $logger.error("killing stale agent failed with #{e.message}")
+        $logger.debug("going to manually remove the lock")
+        File.delete(@agent_lock)
     end
 
-    def get_agent_pid
-      if File.exists?(@agent_lock)
-        pid = File.open(@agent_lock).read
+    def get_agent_pid(pidfile)
+      $logger.debug("reading pid file #{pidfile}")
+      if File.exists?(pidfile)
+        pid = File.open(pidfile).read
         pid.chomp.to_i
       end
     end
@@ -61,32 +73,35 @@ module PuppetMonitor
 
   class SunOS < BasePuppetMonitor
     def restart
-      `/usr/sbin/svcadm restart puppet`
+      $logger.debug("going to restart puppet on SunOS with svcadm")
+
+      if `/bin/svcs puppet` =~ /maintenance/
+        $logger.debug("puppet smf service is is maintenance state, disabling service")
+        `/usr/sbin/svcadm disable puppet`
+	sleep 2
+      end 
+
+      $logger.debug("reenabling service and waiting 5 seconds")
+      `/usr/sbin/svcadm enable puppet`
+      sleep 5
     end
 
-    def status_ok?
-      `/usr/sbin/svcs puppet`
-    end
   end
 
   class AIX < BasePuppetMonitor
     def restart
+      $logger.debug("going to restart puppet on AIX with /etc/rc.d/init.d/puppet")
       `/etc/rc.d/init.d/puppet restart`
     end
 
-    def status_ok?
-      `/etc/rc.d/init.d/puppet status`
-    end
   end
 
   class Linux < BasePuppetMonitor
     def restart
+      $logger.debug("going to restart puppet on Linux with /sbin/service")
       `/sbin/service puppet restart`
     end
 
-    def status_ok?
-      `/sbin/service puppet status`
-    end
   end
 end
 
