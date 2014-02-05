@@ -1,25 +1,34 @@
 #!/bin/env ruby
 
-require 'logger'
+# maximum age of the agent lock file in seconds
+$MAX_AGE  = 43200
 
+#if restarting the agent fails, whom should we contact?
+$MAILADDR = 'anton.schmidbauer@s-itsolutions.at'
+
+
+require 'logger'
 $logger       = Logger.new(STDOUT)
 $logger.level = Logger::DEBUG
 
-# maximum age of the agent lock file in seconds
-$MAX_AGE = 43200
 
 module PuppetMonitor
 
   class BasePuppetMonitor
-    attr_reader :state_dir, :agent_lock
+    attr_reader :state_dir, :agent_lock, :hostname
 
     def initialize()
       @state_dir  = '/var/lib/puppet/state'
       @state_dir  = ENV['PUPPETAGENT_STATE_DIR'] if ENV['PUPPETAGENT_STATE_DIR']
       @agent_lock = File.join(@state_dir, 'agent_catalog_run.lock')
+      @hostname   = `hostname`.chomp()
     end
 
     def restart
+      raise NotImplementedError
+    end
+
+    def status_ok?
       raise NotImplementedError
     end
 
@@ -48,12 +57,15 @@ module PuppetMonitor
         pid.chomp.to_i
       end
     end
-
   end
 
   class SunOS < BasePuppetMonitor
     def restart
       `/usr/sbin/svcadm restart puppet`
+    end
+
+    def status_ok?
+      `/usr/sbin/svcs puppet`
     end
   end
 
@@ -61,18 +73,26 @@ module PuppetMonitor
     def restart
       `/etc/rc.d/init.d/puppet restart`
     end
+
+    def status_ok?
+      `/etc/rc.d/init.d/puppet status`
+    end
   end
 
   class Linux < BasePuppetMonitor
     def restart
       `/sbin/service puppet restart`
     end
+
+    def status_ok?
+      `/sbin/service puppet status`
+    end
   end
 end
 
-class GetAMonitor
+class GetAPuppetMonitor
   def initialize()
-    case `uname -s`.chomp()
+    case `uname -s`.chomp
     when 'Linux'
       @monimp = PuppetMonitor::Linux.new
 
@@ -84,15 +104,31 @@ class GetAMonitor
     end
   end
 
+  def restart
+    $logger.debug("going restart the puppet agent")
+    @monimp.restart
+    $logger.debug("waiting 5 seconds to give the agent time for startup")
+    sleep 5
+  end
+
   def method_missing(meth, *args, &block)
     @monimp.send(meth.to_sym, *args, &block)
   end
-edn
+end
 
+def send_mail
+end
 
-mon = GetAMonitor.new
-if mon.lock_older_than?($MAX_AGE)
-  $logger.debug("going restart the puppet agent")
-  mon.kill_stale_agent
-  mon.restart
+#-----
+# MAIN()
+#
+puppet = GetAPuppetMonitor.new
+if puppet.lock_older_than?($MAX_AGE)
+  puppet.kill_stale_agent
+end
+
+puppet.restart
+if not puppet.status_ok?
+  $logger.error("restarting the agent failed")
+  send_mail($MAILADDR, "restarting the agent on #{mon.hostname} failed")
 end
