@@ -89,11 +89,14 @@ module PuppetMonitor
       if `/bin/svcs puppet` =~ /maintenance/
         $logger.debug("puppet smf service is is maintenance state, disabling service")
         `/usr/sbin/svcadm disable puppet`
-	sleep 2
+        sleep 5
+        $logger.debug("reenabling service and waiting 5 seconds")
+        `/usr/sbin/svcadm enable puppet`
+        sleep 5
       end
 
       $logger.debug("reenabling service and waiting 5 seconds")
-      `/usr/sbin/svcadm enable puppet`
+      `/usr/sbin/svcadm restart puppet`
       sleep 5
     end
 
