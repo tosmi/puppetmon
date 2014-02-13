@@ -9,7 +9,7 @@ $MAILADDR = 'anton.schmidbauer@s-itsolutions.at'
 
 require 'logger'
 $logger       = Logger.new(STDOUT)
-$logger.level = Logger::DEBUG
+$logger.level = Logger::ERROR
 
 
 module PuppetMonitor
@@ -67,7 +67,7 @@ module PuppetMonitor
         $logger.debug("going to manually remove the lock")
         File.delete(@agent_lock)
       rescue NoAgentPIDError
-        $logger.error("Could not determine stale agent pid, maybe pid file empty?")
+        $logger.warn("Could not determine stale agent pid, maybe pid file empty?")
         $logger.debug("going to manually remove the lock")
         File.delete(@agent_lock)
     end
@@ -90,7 +90,7 @@ module PuppetMonitor
         $logger.debug("puppet smf service is is maintenance state, disabling service")
         `/usr/sbin/svcadm disable puppet`
 	sleep 2
-      end 
+      end
 
       $logger.debug("reenabling service and waiting 5 seconds")
       `/usr/sbin/svcadm enable puppet`
