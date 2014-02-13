@@ -14,6 +14,12 @@ $logger.level = Logger::DEBUG
 
 module PuppetMonitor
 
+  class PuppetMonitorError < StandardError
+  end
+
+  class NoAgentPIDError < PuppetMonitorError
+  end
+
   class BasePuppetMonitor
     attr_reader :state_dir, :agent_lock, :hostname
 
@@ -60,12 +66,17 @@ module PuppetMonitor
         $logger.error("killing stale agent failed with #{e.message}")
         $logger.debug("going to manually remove the lock")
         File.delete(@agent_lock)
+      rescue NoAgentPIDError
+        $logger.error("Could not determine stale agent pid, maybe pid file empty?")
+        $logger.debug("going to manually remove the lock")
+        File.delete(@agent_lock)
     end
 
     def get_agent_pid(pidfile)
       $logger.debug("reading pid file #{pidfile}")
       if File.exists?(pidfile)
         pid = File.open(pidfile).read
+        raise NoAgentPIDError if pid.empty?
         pid.chomp.to_i
       end
     end
