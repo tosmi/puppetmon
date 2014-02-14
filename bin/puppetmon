@@ -95,7 +95,7 @@ module PuppetMonitor
         sleep 5
       end
 
-      $logger.debug("reenabling service and waiting 5 seconds")
+      $logger.debug("restarting service and waiting 5 seconds")
       `/usr/sbin/svcadm restart puppet`
       sleep 5
     end
