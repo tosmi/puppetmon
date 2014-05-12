@@ -1,5 +1,7 @@
 #!/bin/env ruby
 
+require 'optparse'
+
 # maximum age of the agent lock file in seconds
 $MAX_AGE  = 43200
 
@@ -148,15 +150,30 @@ end
 def send_mail
 end
 
+def get_options
+  options = {}
+  OptionParser.new do |opts|
+    opts.on('--no-restart', 'Do not restart the puppet agent') do |v|
+      p 'here'
+      options[:restart] = v
+    end
+  end
+  return options
+end
+
 #-----
 # MAIN()
 #
+options = get_options
+p options
+
 puppet = GetAPuppetMonitor.new
 if puppet.lock_older_than?($MAX_AGE)
   puppet.kill_stale_agent
 end
 
-puppet.restart
+puppet.restart if options[:restart]
+
 if not puppet.status_ok?
   $logger.error("restarting the agent failed")
   send_mail($MAILADDR, "restarting the agent on #{mon.hostname} failed")
